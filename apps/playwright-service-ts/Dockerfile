@@ -1,6 +1,7 @@
-FROM node:18-slim
+# ─── Stage 1: Builder – compila tu aplicación + descarga Chromium ───
+FROM node:18-slim AS builder
 
-# Instalar dependencias del sistema necesarias para Chromium
+# Instala librerías del sistema necesarias para Chromium
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     fonts-liberation \
@@ -31,29 +32,36 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /usr/src/app
 
-# Copiar package.json (y lockfile si existe), instalar dependencias
+# Copia dependencias
 COPY package*.json ./
 RUN npm install
 
-# Copiar resto de código
+# Copia el código fuente
 COPY . .
 
-# Definir path donde instalará los navegadores
+# Define dónde se instalarán los navegadores
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# Instalar chromium + sus dependencias usando Playwright
+# Instala Chromium + dependencias para Playwright
 RUN npx playwright install --with-deps chromium
 
-# (Opcional) limpia cachés npm / node_modules innecesarios para reducir tamaño
-RUN npm prune --production
-
-# Construir tu app (si tienes build step)
+# Compila TypeScript
 RUN npm run build
 
+# ─── Stage 2: Producción – imagen liviana con solo lo necesario ───
+FROM node:18-slim AS runtime
+WORKDIR /usr/src/app
+
+# Copia artefactos compilados + node_modules (y binarios de Chromium) desde el builder
+COPY --from=builder /usr/src/app/dist ./dist
+COPY --from=builder /usr/src/app/node_modules ./node_modules
+COPY --from=builder /ms-playwright /ms-playwright
+
+# Si usas variables de entorno para puerto:
 ARG PORT
 ENV PORT=${PORT:-3000}
 
 EXPOSE ${PORT}
 
-# Ajuste: lanzar como root o crear usuario no-root si prefieres
-CMD ["npm", "start"]
+# Comando por defecto
+CMD ["node", "dist/api.js"]
